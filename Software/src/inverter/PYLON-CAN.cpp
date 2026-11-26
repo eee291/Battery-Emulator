@@ -161,16 +161,24 @@ void PylonInverter::
   put_u16le(PYLON_4240, 6, 1);
   PYLON_4270.data = PYLON_4240.data;
 
-  // 0x4250 / 0x5310 status: 0 = sleep/idle, 1 = charging (current_dA > 0), 2 = discharging (current_dA < 0)
-  uint8_t status = 0;
+  // 0x4250 status (matches 0x080486E4): 0 = Sleep (fault/relays open), 1 = Charge (> +3.0 A),
+  // 2 = Discharge (< -3.0 A), 3 = Idle (relays closed, within +/-3.0 A)
+  uint8_t status_4250 = 0;
+  uint8_t status_5310 = 0;
   if (!fault) {
-    if (datalayer.aggregate.current_dA > 0)
-      status = 1;
-    else if (datalayer.aggregate.current_dA < 0)
-      status = 2;
+    if (datalayer.aggregate.current_dA > 30) {
+      status_4250 = 1;
+      status_5310 = 1;
+    } else if (datalayer.aggregate.current_dA < -30) {
+      status_4250 = 2;
+      status_5310 = 2;
+    } else {
+      status_4250 = 3;  // Idle (relays closed)
+      status_5310 = 0;  // 0x5310 uses #0x7e5 (0=idle, 1=chg, 2=dis)
+    }
   }
-  PYLON_4250.data.u8[0] = status;
-  PYLON_5310.data.u8[3] = status;
+  PYLON_4250.data.u8[0] = status_4250;
+  PYLON_5310.data.u8[3] = status_5310;
 
   // 0x4260 module voltage extremes (mV, 16-bit, 0.1 V resolution) derived from pack voltage / emulated modules
   // so NMC packs (e.g. 108S) stay consistent with the emulated 16S Deye LFP module count
@@ -219,8 +227,10 @@ void PylonInverter::
   // 0x52A0 byte 1: modules present
   PYLON_52A0.data.u8[1] = modules > 0 ? 1 : 0;
 
-  // 0x5280 voltage measurement points (0.1 V); bytes 2-3 are the confirmed tower voltage (#0x7d6)
+  // 0x5280 HV voltage measurement points (0.1 V): #0x7db (b0-1), #0x7d6 tower (b2-3), #0x7da (b4-5)
+  put_u16le(PYLON_5280, 0, datalayer.aggregate.voltage_dV);
   put_u16le(PYLON_5280, 2, datalayer.aggregate.voltage_dV);
+  put_u16le(PYLON_5280, 4, datalayer.aggregate.voltage_dV);
 
   // 0x52F0 byte 0: bit 2 charge relay closed, bit 3 discharge relay closed
   PYLON_52F0.data.u8[0] = (charge_allowed ? 0x04 : 0x00) | (discharge_allowed ? 0x08 : 0x00);
