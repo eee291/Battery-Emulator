@@ -161,7 +161,7 @@ void PylonInverter::
   put_u16le(PYLON_4240, 6, 1);
   PYLON_4270.data = PYLON_4240.data;
 
-  // 0x4250 status: 0 = sleep/idle, 1 = charging (current_dA > 0), 2 = discharging (current_dA < 0)
+  // 0x4250 / 0x5310 status: 0 = sleep/idle, 1 = charging (current_dA > 0), 2 = discharging (current_dA < 0)
   uint8_t status = 0;
   if (!fault) {
     if (datalayer.aggregate.current_dA > 0)
@@ -170,13 +170,15 @@ void PylonInverter::
       status = 2;
   }
   PYLON_4250.data.u8[0] = status;
+  PYLON_5310.data.u8[3] = status;
 
-  // 0x4260 module voltage extremes (mV, 16-bit; the battery has 0.1 V resolution) + module numbers;
-  // approximated from the cell extremes and clamped to 65500 to prevent uint16_t overflow
-  int32_t mod_max_mV = (int32_t)datalayer.aggregate.cell_max_voltage_mV * cells_per_module / 100 * 100;
-  int32_t mod_min_mV = (int32_t)datalayer.aggregate.cell_min_voltage_mV * cells_per_module / 100 * 100;
-  put_u16le(PYLON_4260, 0, (uint16_t)(mod_max_mV > 65500 ? 65500 : mod_max_mV));
-  put_u16le(PYLON_4260, 2, (uint16_t)(mod_min_mV > 65500 ? 65500 : mod_min_mV));
+  // 0x4260 module voltage extremes (mV, 16-bit, 0.1 V resolution) derived from pack voltage / emulated modules
+  // so NMC packs (e.g. 108S) stay consistent with the emulated 16S Deye LFP module count
+  int32_t mod_voltage_mV = ((int32_t)datalayer.aggregate.voltage_dV / modules) * 100;
+  if (mod_voltage_mV > 65500)
+    mod_voltage_mV = 65500;
+  put_u16le(PYLON_4260, 0, (uint16_t)mod_voltage_mV);
+  put_u16le(PYLON_4260, 2, (uint16_t)mod_voltage_mV);
   put_u16le(PYLON_4260, 4, 1);
   put_u16le(PYLON_4260, 6, 1);
 
@@ -217,10 +219,8 @@ void PylonInverter::
   // 0x52A0 byte 1: modules present
   PYLON_52A0.data.u8[1] = modules > 0 ? 1 : 0;
 
-  // 0x5280 voltage measurement points (0.1 V)
-  put_u16le(PYLON_5280, 0, datalayer.aggregate.voltage_dV);
+  // 0x5280 voltage measurement points (0.1 V); bytes 2-3 are the confirmed tower voltage (#0x7d6)
   put_u16le(PYLON_5280, 2, datalayer.aggregate.voltage_dV);
-  put_u16le(PYLON_5280, 4, datalayer.aggregate.voltage_dV);
 
   // 0x52F0 byte 0: bit 2 charge relay closed, bit 3 discharge relay closed
   PYLON_52F0.data.u8[0] = (charge_allowed ? 0x04 : 0x00) | (discharge_allowed ? 0x08 : 0x00);
